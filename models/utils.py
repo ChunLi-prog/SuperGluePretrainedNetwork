@@ -262,26 +262,76 @@ def frame2tensor(frame, device):
     return torch.from_numpy(frame / 255.0).float()[None, None].to(device)
 
 
-def read_image(path, device, resize, rotation, resize_float):
+from .image_preprocessor import ImagePreprocessor, preprocess_torch_image
+
+
+def read_image(path, device, resize, rotation=0, resize_float=False, preprocess_config=None):
+    """
+    Read an image from disk and prepare it for the model.
+    
+    Args:
+        path: Path to image
+        device: PyTorch device
+        resize: Resize dimensions (tuple or list)
+        rotation: Rotation to apply to the image
+        resize_float: Whether to resize in float32
+        preprocess_config: Configuration for image preprocessing
+        
+    Returns:
+        orig_img: Original input image after resizing (numpy array)
+        orig_inp: Original image tensor ready for model input
+        processed_img: Preprocessed image if preprocess_config is provided (numpy array)
+        processed_inp: Preprocessed image tensor if preprocess_config is provided
+        scales: Scale factors applied to the image
+        height: Original image height
+        width: Original image width
+    """
     image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if image is None:
-        return None, None, None
-    w, h = image.shape[1], image.shape[0]
+        return None, None, None, None, None, None, None
+    
+    # Save original image before preprocessing for visualization
+    orig_img = image.copy()
+    height, width = orig_img.shape[0], orig_img.shape[1]
+    
+    # Initialize preprocessed image variables
+    processed_img = None
+    processed_inp = None
+    
+    # Apply image preprocessing if configured
+    if preprocess_config:
+        preprocessor = ImagePreprocessor(preprocess_config)
+        processed_img = preprocessor.process(image)
+    
+    # Calculate resize dimensions
+    w, h = orig_img.shape[1], orig_img.shape[0]
     w_new, h_new = process_resize(w, h, resize)
     scales = (float(w) / float(w_new), float(h) / float(h_new))
-
+    
+    # Resize images based on resize_float parameter
     if resize_float:
-        image = cv2.resize(image.astype("float32"), (w_new, h_new))
+        orig_img = cv2.resize(orig_img.astype("float32"), (w_new, h_new))
+        if preprocess_config:
+            processed_img = cv2.resize(processed_img.astype("float32"), (w_new, h_new))
     else:
-        image = cv2.resize(image, (w_new, h_new)).astype("float32")
-
+        orig_img = cv2.resize(orig_img, (w_new, h_new)).astype("float32")
+        if preprocess_config:
+            processed_img = cv2.resize(processed_img, (w_new, h_new)).astype("float32")
+    
+    # Apply rotation if specified
     if rotation != 0:
-        image = np.rot90(image, k=rotation)
+        orig_img = np.rot90(orig_img, k=rotation)
         if rotation % 2:
             scales = scales[::-1]
-
-    inp = frame2tensor(image, device)
-    return image, inp, scales
+        if preprocess_config:
+            processed_img = np.rot90(processed_img, k=rotation)
+    
+    # Convert images to tensors
+    orig_inp = frame2tensor(orig_img, device)
+    if preprocess_config:
+        processed_inp = frame2tensor(processed_img, device)
+    
+    return orig_img, orig_inp, processed_img, processed_inp, scales, height, width
 
 
 # --- GEOMETRY ---

@@ -41,8 +41,11 @@
 # %BANNER_END%
 
 from pathlib import Path
+
+import numpy as np
 import torch
 from torch import nn
+
 
 def simple_nms(scores, nms_radius: int):
     """ Fast Non-maximum suppression to remove nearby points """
@@ -194,7 +197,7 @@ class SuperPoint(nn.Module):
         # Extract descriptors
         descriptors = [sample_descriptors(k[None], d[None], 8)[0]
                        for k, d in zip(keypoints, descriptors)]
-
+        
         return {
             'keypoints': keypoints,
             'scores': scores,
