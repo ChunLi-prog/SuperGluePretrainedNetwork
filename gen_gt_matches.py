@@ -46,8 +46,12 @@
 
 import argparse
 import logging
+# feature_booster_path = Path(__file__).parent / "FeatBooster/FeatureBooster"
+# sys.path.append(str(feature_booster_path))
+import os
 import random
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -57,14 +61,19 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import yaml
+from loguru import logger
 
-from models.matching import Matching
+from models.matching import FeatBoostEnhancedMatching, Matching
+# Use utils.py functions to create the visualization
 from models.utils import (AverageTimer, compute_epipolar_error,
                           compute_pose_error, error_colormap, estimate_pose,
                           make_matching_plot, plot_image_pair, plot_keypoints,
                           plot_matches, pose_auc, read_image,
                           rotate_intrinsics, rotate_pose_inplane,
                           scale_intrinsics)
+
+# from featurebooster import FeatureBooster
 
 # Set up logging
 logging.basicConfig(
@@ -100,10 +109,16 @@ class ImagePair:
         self.image1 = None
         self.inp0 = None
         self.inp1 = None
+        self.image0_prep = None
+        self.image1_prep = None
+        self.inp0_prep = None
+        self.inp1_prep = None
         self.scales0 = None
         self.scales1 = None
         self.intrinsics = intrinsics  # Dictionary containing K0, K1 matrices
         self.extrinsics = extrinsics  # T_0to1 transformation matrix
+        self.shape0 = np.zeros(2)
+        self.shape1 = np.zeros(2)
 
         # Paths for outputs
         self.matches_path = None
@@ -122,61 +137,6 @@ class ImagePair:
             output_dir / f"{self.stem0}_{self.stem1}_evaluation.{viz_extension}"
         )
 
-
-class FeatureExtractor(ABC):
-    """Base class for feature extractors like SuperPoint."""
-
-    @abstractmethod
-    def extract(self, data: Dict) -> Dict:
-        """Extract features from images"""
-        pass
-
-
-class SuperPointExtractor(FeatureExtractor):
-    """SuperPoint feature extractor implementation."""
-
-    def __init__(self, config: Dict, device: torch.device):
-        self.config = config
-        self.device = device
-        self.model = None
-        self._init_model()
-
-    def _init_model(self):
-        from models.matching import Matching
-
-        matcher = Matching({"superpoint": self.config}).eval().to(self.device)
-        self.model = matcher.superpoint
-        logger.info("Initialized SuperPoint feature extractor")
-
-    def extract(self, data: Dict) -> Dict:
-        """Extract features using SuperPoint"""
-        if "image" not in data:
-            raise ValueError("Input data must contain 'image' key")
-
-        with torch.no_grad():
-            pred = self.model({"image": data["image"]})
-
-        return {
-            "keypoints": pred["keypoints"],
-            "scores": pred["scores"],
-            "descriptors": pred["descriptors"],
-        }
-
-
-class FeatureEnhancer(ABC):
-    """
-    Base class for feature enhancement modules like FeatureBooster.
-    This is a placeholder for future integration of the FeatureBooster.
-    """
-
-    @abstractmethod
-    def enhance(
-        self, descriptors: torch.Tensor, keypoints: torch.Tensor
-    ) -> torch.Tensor:
-        """Enhance the features extracted by SuperPoint"""
-        pass
-
-
 class FeatureMatcher(ABC):
     """Base class for feature matchers like SuperGlue."""
 
@@ -184,60 +144,6 @@ class FeatureMatcher(ABC):
     def match(self, data: Dict) -> Dict:
         """Match features between two images"""
         pass
-
-
-class SuperGlueMatcher(FeatureMatcher):
-    """SuperGlue feature matcher implementation."""
-
-    def __init__(self, config: Dict, device: torch.device):
-        self.config = config
-        self.device = device
-        self.model = None
-        self._init_model()
-
-    def _init_model(self):
-        from models.matching import Matching
-
-        matcher = Matching({"superglue": self.config}).eval().to(self.device)
-        self.model = matcher.superglue
-        logger.info(
-            f"Initialized SuperGlue matcher with weights: {self.config.get('weights')}"
-        )
-
-    def match(self, data: Dict) -> Dict:
-        """Match features using SuperGlue"""
-        required_keys = [
-            "keypoints0",
-            "keypoints1",
-            "descriptors0",
-            "descriptors1",
-            "scores0",
-            "scores1",
-            "image0",
-            "image1",
-        ]
-        for key in required_keys:
-            if key not in data:
-                raise ValueError(f"Input data missing required key: {key}")
-
-        # Convert lists to tensors if needed
-        processed_data = {}
-        for k, v in data.items():
-            if isinstance(v, (list, tuple)):
-                processed_data[k] = torch.stack(v)
-            else:
-                processed_data[k] = v
-
-        with torch.no_grad():
-            pred = self.model(processed_data)
-
-        return {
-            "matches0": pred["matches0"],
-            "matches1": pred["matches1"],
-            "matching_scores0": pred["matching_scores0"],
-            "matching_scores1": pred["matching_scores1"],
-        }
-
 
 class KNNMatcher(FeatureMatcher):
     """KNN-based feature matcher implementation."""
@@ -306,7 +212,7 @@ class KNNMatcher(FeatureMatcher):
         desc1 = desc1.astype(np.float32)
 
         # Print descriptor shapes for debugging
-        logger.debug(
+        logger.info(
             f"KNN Matching: Descriptor shapes - desc0: {desc0.shape}, desc1: {desc1.shape}"
         )
 
@@ -850,9 +756,6 @@ class Visualizer:
 
             # --- Original matches visualization ---
             plt.figure(figsize=(12, 6))
-            # Use utils.py functions to create the visualization
-            from models.utils import (plot_image_pair, plot_keypoints,
-                                      plot_matches)
 
             # Plot image pair side by side
             plot_image_pair([image0, image1])
@@ -1046,9 +949,9 @@ class Visualizer:
 
             # --- SuperGlue matches visualization ---
             plt.figure(figsize=(12, 6))
-            # Use utils.py functions to create the visualization
-            from models.utils import (plot_image_pair, plot_keypoints,
-                                      plot_matches)
+            # # Use utils.py functions to create the visualization
+            # from models.utils import (plot_image_pair, plot_keypoints,
+            #                           plot_matches)
 
             # Plot image pair side by side
             plot_image_pair([image0, image1])
@@ -1114,12 +1017,53 @@ class Visualizer:
                     sg_path.unlink(missing_ok=True)
                     knn_path.unlink(missing_ok=True)
 
+    def visualize_feature_booster_comparison(
+        self,
+        image_pair: ImagePair,
+        kpts0: np.ndarray,
+        kpts1: np.ndarray,
+        mkpts0_sp: np.ndarray,  # SuperPoint matches
+        mkpts1_sp: np.ndarray,
+        mconf_sp: np.ndarray,
+        mkpts0_fb: np.ndarray,  # FeatureBooster matches
+        mkpts1_fb: np.ndarray,
+        mconf_fb: np.ndarray,
+        text_sp: List[str],
+        text_fb: List[str],
+    ):
+        """Visualize comparison between SuperPoint and FeatureBooster matches"""
+        comparison_path = (
+            self.output_dir
+            / f"{image_pair.stem0}_{image_pair.stem1}_sp_vs_fb.{self.viz_extension}"
+        )
+
+        # We can reuse the existing superglue_knn_comparison_plot method
+        self.make_superglue_knn_comparison_plot(
+            image_pair.image0,
+            image_pair.image1,
+            kpts0,
+            kpts1,
+            mkpts0_sp,
+            mkpts1_sp,
+            mconf_sp,
+            mkpts0_fb,
+            mkpts1_fb,
+            mconf_fb,
+            text_sp,
+            text_fb,
+            comparison_path,
+            self.fast_viz,
+            self.line_width,
+        )
+
 
 class MatchingPipeline:
     """Class to orchestrate the matching process."""
 
     def __init__(self, config: Dict):
         self.config = config
+        use_cuda = torch.cuda.is_available()
+
         self.device = (
             "cuda" if torch.cuda.is_available() and not config["force_cpu"] else "cpu"
         )
@@ -1133,6 +1077,22 @@ class MatchingPipeline:
             .eval()
             .to(self.device)
         )
+
+        self.feat_bst_matching = (
+            FeatBoostEnhancedMatching(
+                {
+                    "superpoint": config["superpoint"],
+                    "superglue": config["superglue"],
+                    "featurebooster": config["featurebooster"],
+                }
+            )
+            .eval()
+            .to(self.device)
+        )
+
+        # config_file = Path(__file__).parent / "config.yaml"
+        with open(str(config["fb_config"]), "r") as f:
+            fb_yaml = yaml.load(f, Loader=yaml.FullLoader)
 
         # Initialize components using the matching model
         self.feature_extractor = self.matching.superpoint
@@ -1213,66 +1173,86 @@ class MatchingPipeline:
         if self.config["eval"]:
             self._evaluate()
 
-        if self.config["viz"]:
-            self.visualizer.create_videos()
+        # if self.config["viz"]:
+        self.visualizer.create_videos()
 
     def _process_image_pair(self, image_pair: ImagePair):
         """Process a single image pair."""
         # Load images
-        image_pair.image0, image_pair.inp0, image_pair.scales0 = read_image(
-            Path(self.config["input_dir"]) / image_pair.name0,
+        img0_path =os.path.join(Path(self.config["input_dir"]) , "day", image_pair.name0)
+        img1_path =os.path.join(Path(self.config["input_dir"]) , "night", image_pair.name1)
+        logger.info(f"Processing pair {img0_path} {img1_path}")
+
+        # 读取白天的图片
+        (
+            image_pair.image0,
+            image_pair.inp0,
+            image_pair.image0_prep,
+            image_pair.inp0_prep,
+            image_pair.scales0,
+            image_pair.shape0[0],
+            image_pair.shape0[1],
+        ) = read_image(
+            img0_path,
             self.device,
             self.config["resize"],
             image_pair.rot0,
             self.config["resize_float"],
+            self.config["day_preprocess"]
         )
-        image_pair.image1, image_pair.inp1, image_pair.scales1 = read_image(
-            Path(self.config["input_dir"]) / image_pair.name1,
+        
+        # 读取晚上的图片
+        (
+            image_pair.image1,
+            image_pair.inp1,
+            image_pair.image1_prep,
+            image_pair.inp1_prep,
+            image_pair.scales1,
+            image_pair.shape1[0],
+            image_pair.shape1[1],
+        ) = read_image(
+            img1_path,
             self.device,
             self.config["resize"],
             image_pair.rot1,
             self.config["resize_float"],
+            self.config["night_preprocess"]
         )
+        
         if image_pair.image0 is None or image_pair.image1 is None:
             logger.error(
                 f"Problem reading image pair: {image_pair.name0} {image_pair.name1}"
             )
             return
+        if self.config["use_img_postprocess"] and (image_pair.image0_prep is None or image_pair.image1_prep is None):
+            logger.error(
+                f"Problem reading preprocessed image pair: {image_pair.name0} {image_pair.name1}"
+            )
+            return
 
         self.timer.update("load_image")
 
-        # Extract features
+        # FIXME:
+        image_pair.inp0 = image_pair.inp0_prep
+        image_pair.image0 = image_pair.image0_prep
+        image_pair.inp1 = image_pair.inp1_prep
+        image_pair.image1 = image_pair.image1_prep
+        # FIXME end
+        
+        # Extract features through superpoint only
         data0 = {"image": image_pair.inp0}
         data1 = {"image": image_pair.inp1}
+
+        # Use superpoint to extract features from two imgs
         features0 = self.feature_extractor({"image": data0["image"]})
         features1 = self.feature_extractor({"image": data1["image"]})
 
-        # # ALWAYS convert features to tensors via stacking
-        # if isinstance(features0["keypoints"], list):
-        #     keypoints0 = torch.stack(features0["keypoints"])
-        #     scores0 = torch.stack(features0["scores"])
-        #     descriptors0 = torch.stack(features0["descriptors"])
-        # else:
-        #     keypoints0 = features0["keypoints"]
-        #     scores0 = features0["scores"]
-        #     descriptors0 = features0["descriptors"]
-
-        # if isinstance(features1["keypoints"], list):
-        #     keypoints1 = torch.stack(features1["keypoints"])
-        #     scores1 = torch.stack(features1["scores"])
-        #     descriptors1 = torch.stack(features1["descriptors"])
-        # else:
-        #     keypoints1 = features1["keypoints"]
-        #     scores1 = features1["scores"]
-        #     descriptors1 = features1["descriptors"]
-
-        keypoints0 = features0["keypoints"]
-        scores0 = features0["scores"]
-        descriptors0 = features0["descriptors"]
+        keypoints0 = features0["keypoints"]  # tensor shape (1， N, 2)
+        scores0 = features0["scores"]  # shape (1, N,)
+        descriptors0 = features0["descriptors"]  # shape (1, M, 256)
         keypoints1 = features1["keypoints"]
         scores1 = features1["scores"]
         descriptors1 = features1["descriptors"]
-
         # Build match_data using the tensor features
         match_data = {
             "image0": image_pair.inp0,
@@ -1284,13 +1264,52 @@ class MatchingPipeline:
             "descriptors0": descriptors0,
             "descriptors1": descriptors1,
         }
-        match_data_sg = {
+        
+        ## Compute boosted descriptors using FeatureBooster if enabled
+        if self.config["use_fb"]:
+            match_data_fb = {
+                "image0": image_pair.inp0,
+                "image1": image_pair.inp1,
+                "shape0": image_pair.shape0[0],
+                "shape1": image_pair.shape0[1],
+            }
+            fb_pred = self.feat_bst_matching(match_data_fb)
+            fb_pred = {k: v[0].cpu().numpy() for k, v in fb_pred.items()}
+            kpts0_fb, kpts1_fb = fb_pred["keypoints0"], fb_pred["keypoints1"]
+            matches0_fb_sg, conf_fb_sg = fb_pred["matches0"], fb_pred["matching_scores0"]
+            
+            valid_fb_sg = matches0_fb_sg > -1
+            mkpts0_fb_sg = kpts0_fb[valid_fb_sg]
+            mkpts1_fb_sg = kpts1_fb[matches0_fb_sg[valid_fb_sg]]
+            mconf_fb_sg = conf_fb_sg[valid_fb_sg]
+            
+            ## Update match_data with SP+FB+SG results
+            match_data_fb.update(
+                {
+                    "keypoints0": [torch.from_numpy(kpts0_fb).to(self.device).float()],    # list with tensor of shape (N,2)
+                    "keypoints1": [torch.from_numpy(kpts1_fb).to(self.device).float()],
+                    "scores0": fb_pred['scores0'],          # list with tensor of shape (N,)
+                    "scores1": fb_pred['scores1'],
+                    "descriptors0": [torch.from_numpy(fb_pred["descriptors0"]).to(self.device).float()],   # list with tensor of shape (256, N)
+                    "descriptors1": [torch.from_numpy(fb_pred["descriptors1"]).to(self.device).float()],
+                    "matches0": matches0_fb_sg,
+                    "matching_scores0": conf_fb_sg,
+                }
+            )
+
+            # import pdb
+
+            # pdb.set_trace()
+
+
+        ## superpoint+superglue
+        match_data_superglue = {
             "image0": image_pair.inp0,
             "image1": image_pair.inp1,
         }
 
-        # Use complete matching model
-        pred = self.matching(match_data_sg)
+        # Use superpoint + superglue matching model
+        pred = self.matching(match_data_superglue)
         pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
         matches = {
             "matches0": pred["matches0"],
@@ -1301,12 +1320,6 @@ class MatchingPipeline:
         kpts0, kpts1 = pred["keypoints0"], pred["keypoints1"]
         matches0, conf = pred["matches0"], pred["matching_scores0"]
 
-        ## Use tensor indexing (no fallback to numpy)
-        # valid = matches["matches0"] > -1
-        # mkpts0 = keypoints0[valid]
-        # mkpts1 = keypoints1[matches["matches0"][valid]]
-        # mconf = matches["matching_scores0"][valid]
-
         # Keep the matching keypoints.
         valid = matches0 > -1
         mkpts0 = kpts0[valid]
@@ -1314,12 +1327,9 @@ class MatchingPipeline:
         mconf = conf[valid]
 
         # Apply RANSAC if requested
-        if self.config["ransac"]:
-            mkpts0_ransac, mkpts1_ransac, mconf_ransac, ransac_mask = (
-                self.ransac_filter.filter(mkpts0, mkpts1, mconf)
-            )
-        else:
-            mkpts0_ransac, mkpts1_ransac, mconf_ransac = mkpts0, mkpts1, mconf
+        mkpts0_ransac, mkpts1_ransac, mconf_ransac, _ = (
+            self.ransac_filter.filter(mkpts0, mkpts1, mconf)
+        )
 
         # Save matches
         out_matches = {
@@ -1333,35 +1343,11 @@ class MatchingPipeline:
         }
         np.savez(str(image_pair.matches_path), **out_matches)
 
-        # Evaluate pose if requested
-        if self.config["eval"] and image_pair.intrinsics and image_pair.extrinsics:
-            K0 = scale_intrinsics(image_pair.intrinsics["K0"], image_pair.scales0)
-            K1 = scale_intrinsics(image_pair.intrinsics["K1"], image_pair.scales1)
-            T_0to1 = image_pair.extrinsics
-
-            # Update the intrinsics + extrinsics if EXIF rotation was found
-            if image_pair.rot0 != 0 or image_pair.rot1 != 0:
-                cam0_T_w = np.eye(4)
-                cam1_T_w = T_0to1
-                if image_pair.rot0 != 0:
-                    K0 = rotate_intrinsics(K0, image_pair.image0.shape, image_pair.rot0)
-                    cam0_T_w = rotate_pose_inplane(cam0_T_w, image_pair.rot0)
-                if image_pair.rot1 != 0:
-                    K1 = rotate_intrinsics(K1, image_pair.image1.shape, image_pair.rot1)
-                    cam1_T_w = rotate_pose_inplane(cam1_T_w, image_pair.rot1)
-                cam1_T_cam0 = cam1_T_w @ np.linalg.inv(cam0_T_w)
-                T_0to1 = cam1_T_cam0
-
-            eval_results = self.pose_estimator.estimate_and_evaluate(
-                mkpts0_ransac, mkpts1_ransac, K0, K1, T_0to1, matches["matches0"]
-            )
-            np.savez(str(image_pair.eval_path), **eval_results)
-
         # Visualize matches if requested
         if self.config["viz"]:
             text = [
                 "SuperGlue",
-                f"Keypoints: {len(features0['keypoints'])}:{len(features1['keypoints'])}",
+                f"Keypoints: {len(features0['keypoints'][0])}:{len(features1['keypoints'][0])}",
                 f"Matches: {len(mkpts0)}",
             ]
             if self.config["ransac"]:
@@ -1375,6 +1361,7 @@ class MatchingPipeline:
                 f"Image Pair: {image_pair.stem0}:{image_pair.stem1}",
             ]
 
+            # 可视化superpoint+superglue matching结果
             self.visualizer.visualize_matches(
                 image_pair,
                 features0["keypoints"],
@@ -1387,6 +1374,7 @@ class MatchingPipeline:
                 small_text,
             )
 
+            # Visualize superpoint+superglue w/o RANSAC 与 RANSAC-filtered 的对比
             if self.config["viz_comparison"] and self.config["ransac"]:
                 self.visualizer.visualize_ransac_comparison(
                     image_pair,
@@ -1401,90 +1389,131 @@ class MatchingPipeline:
                     text,
                 )
 
-            if self.config["compare_with_knn"]:
-                knn_matches = self.knn_matcher.match(match_data)
-                valid_knn = knn_matches["matches0"] > -1
+        ## Visualize SP+FB+SG+RANSAC and SP+SG+RANSAC comparison when enabled.
+        if self.config["use_fb"] and self.config["compare_fb_sg_ransac"]:
+            mkpts0_fb_sg_ransac, mkpts1_fb_sg_ransac, mconf_fb_sg_ransac, _ = (
+                self.ransac_filter.filter(mkpts0_fb_sg, mkpts1_fb_sg, mconf_fb_sg)
+            )
+            self.visualizer.visualize_feature_booster_comparison(
+                image_pair,
+                features0["keypoints"],
+                features1["keypoints"],
+                mkpts0_ransac,
+                mkpts1_ransac,
+                mconf_ransac,  # SP+SG+RANSAC results
+                mkpts0_fb_sg_ransac,
+                mkpts1_fb_sg_ransac,
+                mconf_fb_sg_ransac,  # SP+FB+SG+RANSAC results
+                ["SP+SG+RANSAC"],
+                ["SP+FB+SG+RANSAC"],
+            )
 
-                # mkpts0_knn = features0["keypoints"][valid_knn]
-                # mkpts1_knn = features1["keypoints"][knn_matches["matches0"][valid_knn]]
-                # mconf_knn = knn_matches["matching_scores0"][valid_knn]
-                mkpts0_knn = kpts0[valid_knn]
-                mkpts1_knn = kpts1[knn_matches["matches0"][valid_knn]]
-                mconf_knn = conf[valid_knn]
+        if self.config["compare_sg_knn_ransac"]:
+            knn_matches = self.knn_matcher.match(match_data)
+            valid_knn = knn_matches["matches0"] > -1
 
-                text_knn = [
-                    "KNN",
-                    f"Keypoints: {len(features0['keypoints'])}:{len(features1['keypoints'])}",
-                    f"Matches: {len(mkpts0_knn)}",
-                ]
+            # mkpts0_knn = features0["keypoints"][valid_knn]
+            # mkpts1_knn = features1["keypoints"][knn_matches["matches0"][valid_knn]]
+            # mconf_knn = knn_matches["matching_scores0"][valid_knn]
+            mkpts0_knn = kpts0[valid_knn]
+            mkpts1_knn = kpts1[knn_matches["matches0"][valid_knn]]
+            mconf_knn = conf[valid_knn]
 
-                self.visualizer.visualize_matcher_comparison(
-                    image_pair,
-                    features0["keypoints"],
-                    features1["keypoints"],
-                    mkpts0,
-                    mkpts1,
-                    mconf,
-                    mkpts0_knn,
-                    mkpts1_knn,
-                    mconf_knn,
-                    text,
-                    text_knn,
-                )
+            text_sg_ransac = [
+                "SP+SuperGlue+RANSAC ",
+                f"Keypts in day|night: {len(features0['keypoints'][0])}:{len(features1['keypoints'][0])}",
+                f"Matches: {len(mkpts0_ransac)}",
+                f"RANSAC: {len(mkpts0_ransac)}/{len(mkpts0)}",
+            ]
 
-                if self.config["ransac"]:
-                    mkpts0_knn_ransac, mkpts1_knn_ransac, mconf_knn_ransac, _ = (
-                        self.ransac_filter.filter(mkpts0_knn, mkpts1_knn, mconf_knn)
-                    )
-                    text_knn_ransac = [
-                        "KNN+RANSAC",
-                        f"Keypoints: {len(features0['keypoints'])}:{len(features1['keypoints'])}",
-                        f"Matches: {len(mkpts0_knn_ransac)}",
-                    ]
-                    self.visualizer.visualize_matcher_comparison(
-                        image_pair,
-                        features0["keypoints"],
-                        features1["keypoints"],
-                        mkpts0_ransac,
-                        mkpts1_ransac,
-                        mconf_ransac,
-                        mkpts0_knn_ransac,
-                        mkpts1_knn_ransac,
-                        mconf_knn_ransac,
-                        text,
-                        text_knn_ransac,
-                    )
+            mkpts0_knn_ransac, mkpts1_knn_ransac, mconf_knn_ransac, _ = (
+                self.ransac_filter.filter(mkpts0_knn, mkpts1_knn, mconf_knn)
+            )
+            text_knn_ransac = [
+                "SP+KNN+RANSAC",
+                f"Keypts in day|night: {len(features0['keypoints'][0])}:{len(features1['keypoints'][0])}",
+                f"Matches: {len(mkpts0_knn_ransac)}",
+                f"RANSAC: {len(mkpts0_knn_ransac)}/{len(mkpts0_knn)}",
+            ]
+            self.visualizer.visualize_matcher_comparison(
+                image_pair,
+                features0["keypoints"],
+                features1["keypoints"],
+                mkpts0_ransac,
+                mkpts1_ransac,
+                mconf_ransac,
+                mkpts0_knn_ransac,
+                mkpts1_knn_ransac,
+                mconf_knn_ransac,
+                text_sg_ransac,
+                text_knn_ransac,
+            )
+            
+        if self.config["use_fb"] and self.config["compare_knn_fb_ransac"]:
+            ## superpoint+featurebooster+knn+ransac
+            fb_knn_matches = self.knn_matcher.match(match_data_fb)
+            valid_fb_knn = fb_knn_matches["matches0"] > -1
+            mkpts0_fb_knn = kpts0_fb[valid_fb_knn]
+            mkpts1_fb_knn = kpts1_fb[fb_knn_matches["matches0"][valid_fb_knn]]
+            mconf_fb_knn = conf[valid_fb_knn]
+            
+            # Ransac
+            mkpts0_fb_knn_ransac, mkpts1_fb_knn_ransac, mconf_fb_knn_ransac, _ = (
+                self.ransac_filter.filter(mkpts0_fb_knn, mkpts1_fb_knn, mconf_fb_knn)
+            )
+            text_fb_knn_ransac = [
+                "SP+FB+KNN+RANSAC",
+                f"Keypts in day|night: {len(kpts0_fb)}:{len(kpts1_fb)}",
+                f"Matches: {len(mkpts0_fb_knn_ransac)}",
+                f"RANSAC: {len(mkpts0_fb_knn_ransac)}/{len(mkpts0_fb_knn)}",
+            ]
+            # small_text_fb_knn = [
+            #     f"Keypoint Threshold: {self.config['superpoint']['keypoint_threshold']:.4f}",
+            #     # f"Match Threshold: {self.config['superglue']['match_threshold']:.2f}",
+            #     f"Image Pair: {image_pair.stem0}:{image_pair.stem1}",
+            # ]
+            # self.visualizer.visualize_matches(
+            #     image_pair,
+            #     kpts0_fb,
+            #     kpts1_fb,
+            #     mkpts0_fb_knn,
+            #     mkpts1_fb_knn,
+            #     mconf_fb_knn,
+            #     text_fb_knn,
+            #     "FeatureBooster+KNN",
+            #     small_text_fb_knn,
+            # )
 
-            if self.config["eval"] and image_pair.intrinsics and image_pair.extrinsics:
-                eval_results = np.load(image_pair.eval_path)
-                err_t, err_R = eval_results["error_t"], eval_results["error_R"]
-                num_correct = eval_results["num_correct"]
-                epi_errs = eval_results["epipolar_errors"]
+            # superpoint+knn+ransac
+            knn_matches = self.knn_matcher.match(match_data)
+            valid_knn = knn_matches["matches0"] > -1
 
-                text_eval = [
-                    "SuperGlue",
-                    f"Delta R: {err_R:.1f} deg" if not np.isinf(err_R) else "FAIL",
-                    f"Delta t: {err_t:.1f} deg" if not np.isinf(err_t) else "FAIL",
-                    f"inliers: {num_correct}/{(matches['matches0'] > -1).sum()}",
-                ]
-                if image_pair.rot0 != 0 or image_pair.rot1 != 0:
-                    text_eval.append(f"Rotation: {image_pair.rot0}:{image_pair.rot1}")
-
-                self.visualizer.visualize_evaluation(
-                    image_pair,
-                    features0["keypoints"],
-                    features1["keypoints"],
-                    mkpts0_ransac,
-                    mkpts1_ransac,
-                    epi_errs,
-                    err_t,
-                    err_R,
-                    matches["matches0"],
-                    num_correct,
-                    text_eval,
-                    small_text,
-                )
-
+            mkpts0_knn = kpts0[valid_knn]
+            mkpts1_knn = kpts1[knn_matches["matches0"][valid_knn]]
+            mconf_knn = conf[valid_knn]
+            mkpts0_knn_ransac, mkpts1_knn_ransac, mconf_knn_ransac, _ = (
+                self.ransac_filter.filter(mkpts0_knn, mkpts1_knn, mconf_knn)
+            )
+            text_knn_ransac = [
+                "SP+KNN+RANSAC",
+                f"Keypts in day|night: {len(kpts0)}:{len(kpts1)}",
+                f"Matches: {len(mkpts0_knn_ransac)}",
+                f"RANSAC: {len(mkpts0_knn_ransac)}/{len(mkpts0_knn)}",
+            ]
+            self.visualizer.visualize_matcher_comparison(
+                image_pair,
+                features0["keypoints"],
+                features1["keypoints"],
+                mkpts0_fb_knn_ransac,
+                mkpts1_fb_knn_ransac,
+                mconf_fb_knn_ransac,
+                mkpts0_knn_ransac,
+                mkpts1_knn_ransac,
+                mconf_knn_ransac,
+                text_fb_knn_ransac,
+                text_knn_ransac,
+            )
+            
         self.timer.update("process_image_pair")
 
     def _evaluate(self):
@@ -1533,7 +1562,7 @@ if __name__ == "__main__":
         "--input_dir",
         type=str,
         # default="assets/scannet_sample_images/",
-        default="/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/raw_imgs/",
+        default="/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/",
         help="Path to the directory that contains the images",
     )
     parser.add_argument(
@@ -1668,7 +1697,7 @@ if __name__ == "__main__":
 
     # Add KNN comparison parameters to the argument parser
     parser.add_argument(
-        "--compare_with_knn",
+        "--compare_sg_knn_ransac",
         action="store_true",
         help="Run KNN matching in addition to SuperGlue for comparison",
     )
@@ -1692,6 +1721,34 @@ if __name__ == "__main__":
         type=float,
         default=0.3,  # Set default to 0.3 as recommended
         help="Line width for visualizing feature matches",
+    )
+    # Add new argument for FeatureBooster usage
+    parser.add_argument(
+        "--use_fb",
+        action="store_true",
+        help="Use FeatureBooster plugin to boost SuperPoint features",
+    )
+    parser.add_argument(
+        "--fb_config",
+        type=str,
+        default="fb_config.yaml",
+        help="Path to a config file for FeatureBooster",
+    )
+    parser.add_argument(
+        "--compare_knn_fb_ransac",
+        action="store_true",
+        help="Run KNN matching in addition to FeatureBooster for comparison",
+    )
+    parser.add_argument(
+        "--compare_fb_sg_ransac",
+        action="store_true",
+        help="Visualize comparison between FeatureBooster and SuperGlue matches",
+    )
+    parser.add_argument(
+        "--use_img_postprocess",
+        type=bool,
+        default=True,
+        help="Apply image post-processing to enhance feature extraction",
     )
 
     opt = parser.parse_args()
@@ -1719,6 +1776,12 @@ if __name__ == "__main__":
     else:
         raise ValueError("Cannot specify more than two integers for --resize")
 
+    day_img_preprocess = None
+    night_img_preprocess = None
+    if opt.use_img_postprocess:
+        day_img_preprocess = {"name": "clahe", "params": {"clip_limit": 3.0, "tile_grid_size": (8, 8)}, "enabled": True}  # Enhance contrast in day images
+        night_img_preprocess = {"name": "denoise", "params": {"h": 10.0}, "enabled": True} # Reduce noise common in night images
+
     config = {
         "input_pairs": opt.input_pairs,
         "input_dir": opt.input_dir,
@@ -1736,6 +1799,16 @@ if __name__ == "__main__":
             "sinkhorn_iterations": opt.sinkhorn_iterations,
             "match_threshold": opt.match_threshold,
         },
+        "featurebooster": {
+            "keypoint_dim": 3,
+            "keypoint_encoder": [32, 64, 128, 256],
+            "descriptor_encoder": [256, 256],
+            "descriptor_dim": 256,  # Match SuperPoint's output dimension
+            "Attentional_layers": 9,
+            # "last_activation": ' ',
+            "l2_normalization": True,
+            "output_dim": 256,  # Match SuperGlue's expected dimension
+        },
         "viz": opt.viz,
         "eval": opt.eval,
         "fast_viz": opt.fast_viz,
@@ -1749,11 +1822,18 @@ if __name__ == "__main__":
         "ransac_threshold": opt.ransac_threshold,
         "ransac_method": opt.ransac_method,
         "viz_comparison": opt.viz_comparison,
-        "compare_with_knn": opt.compare_with_knn,
+        "compare_sg_knn_ransac": opt.compare_sg_knn_ransac,
         "knn_ratio": opt.knn_ratio,
         "knn_distance": opt.knn_distance,
         "line_width": opt.line_width,
         "pose_threshold": 1.0,
+        "fb_config": opt.fb_config,
+        "use_fb": opt.use_fb,  # new flag for feature booster
+        "compare_knn_fb_ransac": opt.compare_knn_fb_ransac,
+        "compare_fb_sg_ransac": opt.compare_fb_sg_ransac,
+        "use_img_postprocess": opt.use_img_postprocess,
+        "day_preprocess": [day_img_preprocess],
+        "night_preprocess": [night_img_preprocess],
     }
 
     pipeline = MatchingPipeline(config)
