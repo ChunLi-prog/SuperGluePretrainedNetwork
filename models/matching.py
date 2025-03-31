@@ -52,6 +52,8 @@ feature_booster_path = Path(__file__).parent.parent / "FeatBooster/FeatureBooste
 sys.path.append(str(feature_booster_path))
 from featurebooster import FeatureBooster
 
+torch.set_grad_enabled(False)
+
 
 class Matching(torch.nn.Module):
     """Image Matching Frontend (SuperPoint + SuperGlue)"""

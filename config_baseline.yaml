@@ -1,16 +1,11 @@
 # File paths
-# input_pairs: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/scannet_pairs.txt"
-# input_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/"
-# output_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/dump_match_pairs/"
-input_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset_3/"
-# data_list_csv: "/home/user/data/maploc_data/gen_featpts_gt_dataset/case_list_day_night_two-cases.csv"
-# keyframe_pairs_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/keyframe_pairs"
-output_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset_3"
+input_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/"
+output_dir: "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset"
 
 # Processing options
 max_length: -1 # Maximum number of pairs to evaluate, -1 for all
+resize: [-1]
 # resize: [640, 480] # Width, Height - use single value for max dimension, -1 for no resize
-resize: [-1] # Width, Height - use single value for max dimension, -1 for no resize
 resize_float: false # Resize the image after casting uint8 to float
 
 # SuperPoint parameters
@@ -28,34 +23,8 @@ superglue:
 # Image preprocessing settings
 preprocess_modes:
   day:
-    - name: "clahe"
-      params:
-        clip_limit: 3.0
-        tile_grid_size: [8, 8]
-    - name: "gamma_correction"
-      params:
-        gamma: 0.8
-    - name: "white_balance"
-      params:
-        method: "gray_world"
   night:
-    - name: "denoise"
-      params:
-        h: 10.0
-        template_window_size: 7
-        search_window_size: 21
-    - name: "auto_contrast"
-      params:
-        clip_hist_percent: 1.0
-    - name: "normalize"
-      params:
-        method: "minmax"
 
-# Additional preprocessor for experimentation
-alt_day_preprocess:
-  name: "gamma_correction"
-  params:
-    gamma: 1.2
 
 # FeatureBooster settings
 featurebooster:
@@ -83,8 +52,7 @@ knn:
   knn_distance: "L2" # Distance metric: "L2", "L1", or "Hamming"
 
 # Visualization settings
-# viz: true # Visualize matches and save plots
-viz: false # Visualize matches and save plots
+viz: true # Visualize matches and save plots
 eval: false # Perform evaluation using ground truth
 fast_viz: false # Use faster visualization with OpenCV
 cache: false # Skip pair if output files exist
@@ -95,13 +63,11 @@ line_width: 0.3 # Line width for matches in visualizations
 pose_threshold: 1.0 # Threshold for pose evaluation
 
 # Comparison options
-viz_comparison: false # Compare before/after RANSAC
+viz_comparison: true # Compare before/after RANSAC
 compare_sg_knn_ransac: false # Compare SuperGlue vs KNN with RANSAC
 compare_knn_fb_ransac: false # Compare KNN vs FeatureBooster with RANSAC
 compare_fb_sg_ransac: false # Compare FeatureBooster vs SuperGlue
 
 # System options
 shuffle: false # Shuffle order of pairs
-force_cpu: false # Force PyTorch to use CPU
-use_multithreading: false # 是否启用多线程处理
-num_threads: 2 # 多线程处理时的线程数量
+force_cpu: false # Force PyTorch to use CPU 

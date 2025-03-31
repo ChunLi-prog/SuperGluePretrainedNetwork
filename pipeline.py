@@ -3,6 +3,8 @@ import logging
 import os
 import random
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -33,7 +35,6 @@ logger = logging.getLogger("MatchingPipeline")
 # Disable gradient computation for inference
 torch.set_grad_enabled(False)
 
-
 class MatchingPipeline:
     """
     Class to orchestrate the matching process.
@@ -55,6 +56,8 @@ class MatchingPipeline:
             config: Dictionary containing pipeline configuration
         """
         self.config = config
+        self.case_lists = []
+        self.case_dir_lists = []
         
         # Set up device for computation
         self.device = (
@@ -69,9 +72,23 @@ class MatchingPipeline:
         self._init_components()
         
         # Load image pairs
-        self.image_pairs = self._load_image_pairs(
-            config["input_pairs"], config["input_dir"]
-        )
+        for dir in os.listdir(self.config["input_dir"]):
+            input_dir = os.path.join(self.config["input_dir"], dir)
+            if os.path.isdir(input_dir) and dir.startswith("P") and "case" in dir and "P11_ent1_route1_case2-P11_ent1_route1_case4" == dir:
+                if os.path.exists(os.path.join(input_dir, "scannet_pairs.txt")):
+                    scannet_pair_txt = os.path.join(input_dir, "scannet_pairs.txt")
+                else:
+                    logger.error(f"Scannet pair file not found for {dir}")
+                    continue
+                if os.path.exists(os.path.join(input_dir, "day")) and os.path.exists(os.path.join(input_dir, "night")):
+                    image_pairs = self._load_image_pairs(
+                        scannet_pair_txt, input_dir
+                    )
+                    self.case_lists.append(image_pairs)
+                    self.case_dir_lists.append(input_dir)
+                else:
+                    logger.error(f"Invalid directory structure for {dir}")
+                    continue
 
         # Timer for performance measurement
         self.timer = AverageTimer(newline=True)
@@ -188,9 +205,16 @@ class MatchingPipeline:
             )
             
             # Set output paths
+            image_pair_output_dir = os.path.join(input_dir, "dump_match_pairs")
+            if not os.path.exists(image_pair_output_dir):
+                os.makedirs(image_pair_output_dir, exist_ok=True)
+                
             image_pair.set_paths(
-                Path(self.config["output_dir"]), self.config["viz_extension"]
+                Path(image_pair_output_dir), self.config["viz_extension"]
             )
+            
+            # 设置当前day-night图像对的superpoint特征子路径
+            image_pair.set_generated_gt_paths(input_dir=input_dir)
             
             image_pairs.append(image_pair)
 
@@ -198,31 +222,169 @@ class MatchingPipeline:
 
     def run(self):
         """Run the matching pipeline on all image pairs."""
-        for i, image_pair in enumerate(self.image_pairs):
-            self._process_image_pair(image_pair)
-            self.timer.print(f"Finished pair {i+1} of {len(self.image_pairs)}")
+        all_inliers = []
+        candidate_dirs = [
+            # "P11_ent1_route1_case1-P11_ent1_route1_case3",
+            # "P13_ent1_route1_case1-P13_ent1_route1_case3",
+            # "P15_ent1_route1_case3-P15_ent1_route1_case1",
+            "P15_ent1_route1_case4-P15_ent1_route1_case2",
+            # "P16_ent1_route1_case1-P16_ent1_route1_case3",
+            # "P17_ent1_route1_case3-P17_ent1_route1_case1",
+            "P18_ent1_route1_case4-P18_ent1_route1_case2",
+            # "P19_ent1_route1_case3-P19_ent1_route1_case1",
+            "P20_ent1_route1_case3-P20_ent1_route1_case1",
+            # "P20_ent1_route1_case4-P20_ent1_route1_case2",
+            # "P22_ent1_route1_case2-P22_ent1_route1_case4"
+        ]
+        
+        # 是否使用多线程处理，从配置获取
+        use_multithreading = self.config.get("use_multithreading", False)
+        num_threads = self.config.get("num_threads", 2)
+        
+        if use_multithreading:
+            logger.info(f"Using multithreading with {num_threads} threads")
+            # 使用多线程版本的实现
+            all_inliers = self._run_multithreaded(candidate_dirs, num_threads)
+        else:
+            logger.info("Using single-thread implementation")
+            # 原始的单线程实现
+            for case_dir in os.listdir(self.config["input_dir"]):
+                case_path = os.path.join(self.config["input_dir"], case_dir)
+                if os.path.isdir(case_path) and case_dir.startswith("P") and case_dir in candidate_dirs:
+                    logger.info(f"Processing case: {case_dir}")
+                    # Set the case-specific output directory for the Visualizer
+                    case_output_dir = Path(case_path) / "visualizations"
+                    self.visualizer.set_case_output_dir(case_output_dir)
 
-        if self.config["eval"]:
-            self._evaluate()
+                    self.image_pairs = self._load_image_pairs(
+                        os.path.join(case_path, "scannet_pairs.txt"), case_path
+                    )
+                    case_inliers = []
+                    for i, image_pair in enumerate(self.image_pairs):
+                        if os.path.exists(image_pair.matches_path):
+                            logger.info(f"Already processed {image_pair.matches_path}")
+                            continue
+                        inliers = self._process_image_pair(image_pair, case_path)
+                        case_inliers.append(inliers)
+                        self.timer.print(f"Finished pair {i+1} of {len(self.image_pairs)}")
 
-        if self.config["viz"]:
-            self.visualizer.create_videos()
+                    # Record inliers and other metrics into a txt file
+                    with open(os.path.join(case_path, "sp_sg_knn_ransac_metrics.txt"), "w") as f:
+                        for inlier in case_inliers:
+                            f.write(f"{inlier}\n")
 
-    def _process_image_pair(self, image_pair: ImagePair):
+                    all_inliers.extend(case_inliers)
+
+    def _run_multithreaded(self, candidate_dirs, num_threads):
+        """使用多线程并行处理多个案例目录
+        
+        Args:
+            candidate_dirs: 要处理的目录列表
+            num_threads: 线程数量
+            
+        Returns:
+            所有案例的内点数列表
+        """
+        all_inliers = []
+        
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            # 为每个案例目录创建一个任务
+            future_to_case = {}
+            for case_dir in os.listdir(self.config["input_dir"]):
+                case_path = os.path.join(self.config["input_dir"], case_dir)
+                if os.path.isdir(case_path) and case_dir.startswith("P") and case_dir in candidate_dirs:
+                    # 提交任务到线程池
+                    future = executor.submit(self._process_case_dir, case_dir, case_path)
+                    future_to_case[future] = case_dir
+            
+            # 收集处理结果
+            for future in as_completed(future_to_case):
+                case_dir = future_to_case[future]
+                try:
+                    case_inliers = future.result()
+                    all_inliers.extend(case_inliers)
+                    logger.info(f"Completed processing case: {case_dir}")
+                except Exception as e:
+                    logger.error(f"Error processing case {case_dir}: {e}")
+        
+        return all_inliers
+    
+    def _process_case_dir(self, case_dir, case_path):
+        """处理单个案例目录，供多线程并行调用
+        
+        Args:
+            case_dir: 案例目录名
+            case_path: 案例目录路径
+            
+        Returns:
+            案例的内点数列表
+        """
+        logger.info(f"Thread {threading.current_thread().name}: Processing case {case_dir}")
+        
+        # 设置线程特定的可视化输出目录
+        case_output_dir = Path(case_path) / "visualizations"
+        case_visualizer = Visualizer(
+            Path(self.config["output_dir"]),
+            self.config["viz_extension"],
+            self.config["show_keypoints"],
+            self.config["fast_viz"],
+            self.config["opencv_display"],
+            self.config["line_width"],
+        )
+        case_visualizer.set_case_output_dir(case_output_dir)
+        
+        # 创建线程特定的计时器
+        case_timer = AverageTimer(newline=True)
+        
+        # 加载图像对
+        image_pairs = self._load_image_pairs(
+            os.path.join(case_path, "scannet_pairs.txt"), case_path
+        )
+        
+        # 处理每个图像对
+        case_inliers = []
+        for i, image_pair in enumerate(image_pairs):
+            if os.path.exists(image_pair.matches_path):
+                logger.info(f"Already processed {image_pair.matches_path}")
+                continue
+                
+            # 使用自定义参数调用处理函数
+            inliers = self._process_image_pair(image_pair, case_path)
+            case_inliers.append(inliers)
+            case_timer.print(f"Thread {threading.current_thread().name}: Finished pair {i+1} of {len(image_pairs)}")
+        
+        # 记录结果到文件
+        with open(os.path.join(case_path, "sp_sg_knn_ransac_metrics.txt"), "w") as f:
+            for inlier in case_inliers:
+                f.write(f"{inlier}\n")
+                
+        return case_inliers
+
+    def plot_violin_diagram(self):
+        # After running the pipeline, plot and save the violin diagram from metrics files
+        metrics_files = [Path(case_path) / "sp_sg_knn_ransac_metrics.txt" for case_path in self.case_dir_lists]
+        logger.info(f"Metrics files: {metrics_files}")
+        output_path = Path(self.config["output_dir"]) / "sp_sg_knn_ransac_violin_plot.png"
+        self.visualizer.plot_and_save_violin_diagram(metrics_files, output_path)
+
+    def _process_image_pair(self, image_pair: ImagePair, case_path: str):
         """
         Process a single image pair.
         
         Args:
             image_pair: ImagePair object to process
+
+        Returns:
+            Number of RANSAC inliers
         """
         # Load images
-        img0_path = os.path.join(Path(self.config["input_dir"]), "day", image_pair.name0)
-        img1_path = os.path.join(Path(self.config["input_dir"]), "night", image_pair.name1)
+        img0_path = os.path.join(Path(case_path), "day", image_pair.name0)
+        img1_path = os.path.join(Path(case_path), "night", image_pair.name1)
         logger.info(f"Processing pair {img0_path} {img1_path}")
 
         # Determine preprocess mode based on image pair names or other criteria
-        preprocess_mode_day = self.config['preprocess_modes']['day']
-        preprocess_mode_night = self.config['preprocess_modes']['night']
+        preprocess_mode_day = None
+        preprocess_mode_night = None
 
         # Read day and night images with appropriate preprocessing
         (
@@ -263,43 +425,15 @@ class MatchingPipeline:
             logger.error(
                 f"Problem reading image pair: {image_pair.name0} {image_pair.name1}"
             )
-            return
+            return 0
 
         self.timer.update("load_image")
 
-        # # Process with FeatureBooster if enabled
-        # if self.config["use_fb"]:
-        #     # Extract features using SuperPoint
-        #     img0_data = {"image": image_pair.processed_inp0}
-        #     img1_data = {"image": image_pair.processed_inp1}
-
-        #     img0_sp_feat = self.sp_feat_extractor(img0_data)
-        #     img1_sp_feat = self.sp_feat_extractor(img1_data)
-
-        #     img0_sp_kpts = img0_sp_feat["keypoints"]
-        #     img0_sp_scores = img0_sp_feat["scores"]
-        #     img0_sp_descriptors = img0_sp_feat["descriptors"]
-        #     img1_sp_kpts = img1_sp_feat["keypoints"]
-        #     img1_sp_scores = img1_sp_feat["scores"]
-        #     img1_sp_descriptors = img1_sp_feat["descriptors"]
-            
-        #     # Build match data using the tensor features
-        #     match_data = {
-        #         "image0": image_pair.inp0,
-        #         "image1": image_pair.inp1,
-        #         "keypoints0": img0_sp_kpts,
-        #         "keypoints1": img1_sp_kpts,
-        #         "scores0": img0_sp_scores,
-        #         "scores1": img1_sp_scores,
-        #         "descriptors0": img0_sp_descriptors,
-        #         "descriptors1": img1_sp_descriptors,
-        #     }
-        #     self._process_with_feature_booster(image_pair, match_data, img0_sp_feat, img1_sp_feat)
-        
         # Process with SuperGlue
-        self._process_with_superglue(image_pair)
+        inliers = self._process_with_superglue(image_pair)
         
         self.timer.update("process_image_pair")
+        return inliers
 
     def _process_with_superglue(self, image_pair):
         """
@@ -307,8 +441,9 @@ class MatchingPipeline:
         
         Args:
             image_pair: ImagePair object
-            match_data: Dictionary containing match data
-            img0_sp_feat, img1_sp_feat: Feature dictionaries extracted from images
+        
+        Returns:
+            Number of RANSAC inliers
         """
         # Match features using SuperGlue
         match_data_sp_sg = {
@@ -333,15 +468,18 @@ class MatchingPipeline:
         valid = matches0 > -1
         mkpts0 = kpts0[valid]
         mkpts1 = kpts1[matches0[valid]]
+        mdesc0 = pred["descriptors0"][:, valid]
+        valid_indices = matches0[valid]
+        mdesc1 = pred["descriptors1"][:, valid_indices]
         mconf = conf[valid]
 
         # Apply RANSAC if requested
         if self.config["ransac"]:
-            mkpts0_ransac, mkpts1_ransac, mconf_ransac, _ = (
-                self.ransac_filter.filter(mkpts0, mkpts1, mconf)
+            mkpts0_ransac, mkpts1_ransac, mconf_ransac, mdesc0_ransac, mdesc1_ransac, _ = (
+                self.ransac_filter.filter_kpts_desc(mkpts0, mkpts1, mconf, mdesc0, mdesc1)
             )
         else:
-            mkpts0_ransac, mkpts1_ransac, mconf_ransac = mkpts0, mkpts1, mconf
+            mkpts0_ransac, mkpts1_ransac, mconf_ransac, mdesc0_ransac, mdesc1_ransac = mkpts0, mkpts1, mconf, None, None
 
         # Save matches
         all_data_sp_sg_ransac = {
@@ -351,16 +489,22 @@ class MatchingPipeline:
             "scores1": pred["scores1"],
             "descriptors0": pred["descriptors0"],
             "descriptors1": pred["descriptors1"],
-            "matches": matches["matches0"],
-            "match_confidence": matches["matching_scores0"],
-            "mkpts0": mkpts0,
-            "mkpts1": mkpts1,
-            "mconf": mconf,
             "mkpts0_ransac": mkpts0_ransac,
             "mkpts1_ransac": mkpts1_ransac,
             "mconf_ransac": mconf_ransac,
+            "mdesc0_ransac": mdesc0_ransac,
+            "mdesc1_ransac": mdesc1_ransac,
         }
         np.savez(str(image_pair.matches_path), **all_data_sp_sg_ransac)
+        
+        # Save Superpoint keypoints if files don't exist yet
+        if not os.path.exists(str(image_pair.sp_kpts0_file)):
+            np.save(str(image_pair.sp_kpts0_file), pred["keypoints0"])
+            logger.info(f"Saved Superpoint keypoints to {image_pair.sp_kpts0_file}")
+        
+        if not os.path.exists(str(image_pair.sp_kpts1_file)):
+            np.save(str(image_pair.sp_kpts1_file), pred["keypoints1"])
+            logger.info(f"Saved Superpoint keypoints to {image_pair.sp_kpts1_file}")
 
         # Visualize matches if requested
         if self.config["viz"]:
@@ -371,6 +515,9 @@ class MatchingPipeline:
         if self.config["compare_sg_knn_ransac"]:
             self._compare_superglue_knn(image_pair, all_data_sp_sg_ransac)
 
+        # Return the number of RANSAC inliers
+        return len(mkpts0_ransac)
+
     def _visualize_matches(self, image_pair, sp_kpts0, sp_kpts1, mkpts0, mkpts1, 
                           mconf, mkpts0_ransac, mkpts1_ransac, mconf_ransac):
         """
@@ -378,14 +525,14 @@ class MatchingPipeline:
         
         Args:
             image_pair: ImagePair object
-            features0, features1: Feature dictionaries
+            sp_kpts0, sp_kpts1: SuperPoint keypoints
             mkpts0, mkpts1: Matched keypoints
             mconf: Match confidence scores
             mkpts0_ransac, mkpts1_ransac: RANSAC-filtered keypoints
             mconf_ransac: RANSAC-filtered confidence scores
         """
         text = [
-            "SuperGlue",
+            "SuperPoint+SuperGlue+RANSAC",
             f"Keypoints: {len(sp_kpts0)}:{len(sp_kpts1)}",
             f"Matches: {len(mkpts0)}",
         ]
@@ -402,14 +549,14 @@ class MatchingPipeline:
             f"Image Pair: {image_pair.stem0}:{image_pair.stem1}",
         ]
 
-        # Visualize SuperGlue matches
+        # Visualize SuperGlue + RANSAC matches
         self.visualizer.visualize_matches(
             image_pair,
             sp_kpts0,
             sp_kpts1,
-            mkpts0,
-            mkpts1,
-            mconf,
+            mkpts0_ransac,
+            mkpts1_ransac,
+            mconf_ransac,
             text,
             "Matches",
             small_text,

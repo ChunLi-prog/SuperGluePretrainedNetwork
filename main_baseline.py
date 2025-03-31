@@ -7,9 +7,9 @@ from pathlib import Path
 import yaml
 
 # Create logger
-logger = logging.getLogger("MatchingPipeline.Main")
+logger = logging.getLogger("GenBaselinePipeline")
 
-from pipeline import MatchingPipeline
+from pipeline_baseline import GenBaselinePipeline
 
 
 def parse_args():
@@ -28,35 +28,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
-
-def validate_args(config):
-    """Validate configuration settings."""
-    assert not (
-        config.get("opencv_display") and not config.get("viz")
-    ), "Must use viz=true with opencv_display=true"
-    assert not (
-        config.get("opencv_display") and not config.get("fast_viz")
-    ), "Cannot use opencv_display=true without fast_viz=true"
-    assert not (
-        config.get("fast_viz") and not config.get("viz")
-    ), "Must use viz=true with fast_viz=true"
-    assert not (
-        config.get("fast_viz") and config.get("viz_extension") == "pdf"
-    ), "Cannot use pdf extension with fast_viz=true"
-
-    resize = config.get("resize", [])
-    if len(resize) == 2 and resize[1] == -1:
-        config["resize"] = resize[0:1]
-    if len(resize) == 2:
-        print(f"Will resize to {resize[0]}x{resize[1]} (WxH)")
-    elif len(resize) == 1 and resize[0] > 0:
-        print(f"Will resize max dimension to {resize[0]}")
-    elif len(resize) == 1:
-        print("Will not resize images")
-    elif len(resize) > 2:
-        raise ValueError("Cannot specify more than two integers for resize")
-
 
 def load_yaml_config(config_path):
     """Load configuration from YAML file."""
@@ -79,41 +50,9 @@ def create_config(opt):
     # Load YAML configuration (required)
     yaml_config = load_yaml_config(opt.config)
     
-    # # Override any settings with command-line arguments if provided
-    # for key, value in vars(opt).items():
-    #     # Skip the config file path itself
-    #     if key == 'config':
-    #         continue
-            
-        # # Only override if the value is not None (i.e., it was explicitly set)
-        # if value is not None:
-        #     # Handle special cases for nested dictionaries
-        #     if key == 'nms_radius' or key == 'keypoint_threshold' or key == 'max_keypoints':
-        #         yaml_config.setdefault('superpoint', {})
-        #         yaml_config['superpoint'][key] = value
-        #     elif key == 'superglue' or key == 'sinkhorn_iterations' or key == 'match_threshold':
-        #         yaml_config.setdefault('superglue', {})
-        #         if key == 'superglue':
-        #             yaml_config['superglue']['weights'] = value
-        #         else:
-        #             yaml_config['superglue'][key] = value
-        #     elif key == 'ransac_enabled':
-        #         yaml_config.setdefault('ransac', {})
-        #         yaml_config['ransac'][key] = value
-        #     elif key == 'knn_ratio' or key == 'knn_distance':
-        #         yaml_config.setdefault('knn', {})
-        #         yaml_config['knn'][key] = value
-        #     # Boolean flags need special handling
-        #     elif isinstance(value, bool) and value is True:
-        #         yaml_config[key] = value
-        #     # Handle all other parameters
-        #     elif value is not None:
-        #         yaml_config[key] = value
-    
     # Ensure all required settings have defaults if not in YAML
-    yaml_config.setdefault('input_pairs', "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/scannet_pairs.txt")
-    yaml_config.setdefault('input_dir', "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/")
-    yaml_config.setdefault('output_dir', "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/P11_ent1_route1_case2_P11_ent1_route1_case4/dump_match_pairs/")
+    yaml_config.setdefault('input_dir', "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/")
+    yaml_config.setdefault('output_dir', "/home/user/data/maploc_data/gen_featpts_gt_dataset/gen_local_feature_dataset/")
     yaml_config.setdefault('max_length', -1)
     yaml_config.setdefault('resize', [640, 480])
     yaml_config.setdefault('resize_float', False)
@@ -162,29 +101,13 @@ def create_config(opt):
     
     # Ensure image preprocessing settings are present
     if 'day_preprocess' not in yaml_config:
-        # yaml_config['day_preprocess'] = [{"name": "clahe", "params": {"clip_limit": 3.0, "tile_grid_size": [8, 8]}}]
         yaml_config['day_preprocess'] = []
     if 'night_preprocess' not in yaml_config:
-        # yaml_config['night_preprocess'] = [{"name": "denoise", "params": {"h": 10.0}}]
         yaml_config['night_preprocess'] = []
-    
-    if 'featurebooster' not in yaml_config:
-        yaml_config['featurebooster'] = {
-            "keypoint_dim": 3,
-            "keypoint_encoder": [32, 64, 128, 256],
-            "descriptor_encoder": [256, 256],
-            "descriptor_dim": 256,
-            "Attentional_layers": 9,
-            "l2_normalization": True,
-            "output_dim": 256,
-        }
-    
-    # Validate the complete configuration
-    validate_args(yaml_config)
-    
+
     # Re-format the configuration for the pipeline
     config = {
-        "input_pairs": yaml_config['input_pairs'],
+        # "input_pairs": yaml_config['input_pairs'],
         "input_dir": yaml_config['input_dir'],
         "output_dir": yaml_config['output_dir'],
         "max_length": yaml_config['max_length'],
@@ -217,8 +140,6 @@ def create_config(opt):
         "compare_fb_sg_ransac": yaml_config['compare_fb_sg_ransac'],
         "day_preprocess": yaml_config['day_preprocess'],
         "night_preprocess": yaml_config['night_preprocess'],
-        "use_multithreading": yaml_config.get('use_multithreading', False),
-        "num_threads": yaml_config.get('num_threads', 2),
     }
     
     return config
@@ -239,8 +160,12 @@ def main():
     }
 
     # Create and run the matching pipeline
-    pipeline = MatchingPipeline(config)
+    pipeline = GenBaselinePipeline(config)
+    
+    # KNN matching  
     pipeline.run()
+    
+    # Plot violin diagram
     pipeline.plot_violin_diagram()
 
 

@@ -6,6 +6,7 @@ import cv2
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
 from data import ImagePair
 # Import utility functions
@@ -51,6 +52,16 @@ class Visualizer:
         self.line_width = line_width
 
         # Ensure output directory exists
+        self.output_dir.mkdir(exist_ok=True, parents=True)
+
+    def set_case_output_dir(self, case_output_dir: Path):
+        """
+        Set the base directory for saving match images for a specific case.
+        
+        Args:
+            case_output_dir: Path to the case-specific output directory
+        """
+        self.output_dir = case_output_dir
         self.output_dir.mkdir(exist_ok=True, parents=True)
 
     def visualize_matches(
@@ -247,6 +258,14 @@ class Visualizer:
         self._create_matches_video("*_matches", fps)
         self._create_matches_video("*_ransac_matches", fps)
         self._create_matches_video("*_ransac_comparison", fps)
+        
+    def create_videos_baseline(self, fps: int = 5):
+        """
+        Create videos from the visualization images for the baseline pipeline.
+        """
+        logger.info("Creating videos from match visualizations...")
+        self._create_matches_video("*_matches", fps)
+        self._create_matches_video("*_ransac_matches", fps)
 
     def _create_matches_video(self, name_pattern: str = "*_matches", fps: int = 5):
         """
@@ -572,3 +591,235 @@ class Visualizer:
                 if True:  # Change to False to keep individual images
                     sg_path.unlink(missing_ok=True)
                     knn_path.unlink(missing_ok=True)
+
+    def plot_and_save_violin_diagram(self, metrics_files: List[Path], output_path: Path):
+        """
+        Plot and save a violin diagram of RANSAC inlier distribution from metrics files.
+        
+        Args:
+            metrics_files: List of paths to metrics.txt files
+            output_path: Path to save the violin plot image
+        """
+        all_inliers = []
+        labels = []  # 添加标签列表用于x轴
+        failed_labels = []  # 添加失败案例标签
+        
+        # 读取所有数据
+        for metrics_file in metrics_files:
+            case_name = metrics_file.parent.name  # 使用父目录名作为case名称
+            case_name = case_name.split("-")[0]
+            labels.append(case_name)
+            
+            try:
+                with open(metrics_file, 'r') as f:
+                    inliers = [int(line.strip()) for line in f.readlines() if line.strip()]
+                    if len(inliers) == 0:
+                        all_inliers.append([0])
+                        failed_labels.append(case_name)
+                    else:
+                        all_inliers.append(inliers)
+            except Exception as e:
+                print(f"Error reading file {metrics_file}: {e}")
+                all_inliers.append([0])
+                failed_labels.append(case_name)
+                
+        # 计算统计值
+        valid_inliers = [
+            item 
+            for i, sublist in enumerate(all_inliers) 
+            if labels[i] not in failed_labels 
+            for item in sublist 
+            if len(sublist) > 0 and item > 0
+        ]
+        
+        if len(valid_inliers) > 0:
+            avg_inliers = np.mean(valid_inliers)
+            std_inliers = np.std(valid_inliers)
+            one_sigma = avg_inliers + std_inliers
+            two_sigma = avg_inliers + 2 * std_inliers
+            three_sigma = avg_inliers + 3 * std_inliers
+        else:
+            avg_inliers = 0
+            one_sigma = 0
+            two_sigma = 0
+            three_sigma = 0
+            
+        # 成功率计算
+        success_count = len(labels) - len(failed_labels)
+        total_count = len(labels)
+        success_rate = success_count / total_count if total_count > 0 else 0
+        
+        # 创建图形
+        fig = plt.figure(figsize=(30, 15))
+        
+        # 绘制小提琴图，不显示均值、中位数和极值点
+        parts = plt.violinplot(
+            all_inliers, showmeans=False, showmedians=False, showextrema=False
+        )
+        
+        # 设置小提琴图颜色
+        for i, pc in enumerate(parts["bodies"]):
+            if labels[i] in failed_labels:
+                pc.set_facecolor("#FF6347")  # 失败案例使用番茄红
+            else:
+                pc.set_facecolor("#4682B4")  # 成功案例使用钢蓝色
+            pc.set_edgecolor("black")
+            pc.set_alpha(0.7)
+            
+        # 添加参考线
+        plt.axhline(
+            avg_inliers,
+            color="#FF4500",
+            linestyle="--",
+            label=f"Average inliers: {avg_inliers:.2f}"
+        )
+        
+        # plt.axhline(
+        #     one_sigma,
+        #     color="#FFA500",
+        #     linestyle="-.",
+        #     label=f"1-sigma: {one_sigma:.2f}"
+        # )
+        
+        # plt.axhline(
+        #     two_sigma,
+        #     color="#FFD700",
+        #     linestyle="-.",
+        #     label=f"2-sigma: {two_sigma:.2f}"
+        # )
+        
+        # plt.axhline(
+        #     three_sigma,
+        #     color="#9ACD32",
+        #     linestyle="-.",
+        #     label=f"3-sigma: {three_sigma:.2f}"
+        # )
+        
+        # # 添加参考数值
+        # plt.axhline(50, color="g", linestyle="--", label="Inliers = 50")
+        # plt.axhline(20, color="b", linestyle="--", label="Inliers = 20")
+        
+        # 设置y轴为对数比例尺
+        ax = plt.gca()
+        ax.set_yscale("symlog", linthresh=3)
+        ax.set_ylim(bottom=0)
+        
+        # 设置x轴标签
+        ax.set_xticks(np.arange(1, len(labels) + 1))
+        ax.set_xticklabels(labels, rotation=90)
+        
+        # 标记失败案例
+        for label_obj in ax.get_xticklabels():
+            if label_obj.get_text() in failed_labels:
+                label_obj.set_color("red")
+                
+        # 添加图例
+        plt.legend(
+            labels=[
+                f"Average inliers: {avg_inliers:.2f}",
+                f"1-sigma: {one_sigma:.2f}",
+                f"2-sigma: {two_sigma:.2f}",
+                f"3-sigma: {three_sigma:.2f}",
+                # "Inliers = 50",
+                # "Inliers = 20"
+            ]
+        )
+        
+        # 统计总体状态
+        total_pairs = sum(len(sublist) for sublist in all_inliers)
+        inliers_above_50 = sum(item >= 50 for sublist in all_inliers for item in sublist)
+        inliers_above_20 = sum(item >= 20 for sublist in all_inliers for item in sublist)
+        ratio_above_50 = inliers_above_50 / total_pairs if total_pairs > 0 else 0
+        ratio_above_20 = inliers_above_20 / total_pairs if total_pairs > 0 else 0
+        
+        # 添加统计文本
+        if len(valid_inliers) > 0:
+            plt.text(
+                len(labels) / 2,
+                max(valid_inliers) * 0.9,
+                f"Success rate: {success_rate:.2%} ({success_count}/{total_count})",
+                horizontalalignment="center",
+                verticalalignment="center",
+                color="blue",
+                fontsize=12
+            )
+            
+            plt.text(
+                len(labels) / 2,
+                max(valid_inliers) * 0.7,
+                f"Average inliers: {avg_inliers:.2f}",
+                horizontalalignment="center",
+                verticalalignment="center",
+                color="#FF4500",
+                fontsize=12
+            )
+            
+            # plt.text(
+            #     len(labels) / 2,
+            #     max(valid_inliers) * 0.5,
+            #     f"Ratio above 50: {ratio_above_50:.2%}",
+            #     horizontalalignment="center",
+            #     verticalalignment="center",
+            #     color="g",
+            #     fontsize=12
+            # )
+            
+            # plt.text(
+            #     len(labels) / 2,
+            #     max(valid_inliers) * 0.3,
+            #     f"Ratio above 20: {ratio_above_20:.2%}",
+            #     horizontalalignment="center",
+            #     verticalalignment="center",
+            #     color="b",
+            #     fontsize=12
+            # )
+            
+            plt.text(
+                len(labels) / 2,
+                max(valid_inliers) * 0.1,
+                f"Total image pairs: {total_pairs}",
+                horizontalalignment="center",
+                verticalalignment="center",
+                color="black",
+                fontsize=12
+            )
+        
+        # 设置标题和轴标签
+        plt.title("RANSAC Inliers Distribution Across Cases", fontsize=16)
+        plt.xlabel("Case Names", fontsize=14)
+        plt.ylabel("Number of RANSAC Inliers (symlog scale)", fontsize=14)
+        
+        
+        print(f"Total Cases: {int(total_count)}")
+        print(f"Successful Cases: {int(success_count)}")
+        print(f"Failed Cases: {int(len(failed_labels))}")
+        print(f"Total Image Pairs: {int(total_pairs)}")
+        print(f"Average Inliers: {avg_inliers:.2f}")
+        print(f"Valid Inliers: {len(valid_inliers)}")
+        print(f"Std_inliers: {std_inliers}")
+        # print(f"Std Dev: {std_inliers:.2f if len(valid_inliers) > 0 else 0.0}")
+        
+        # 添加详细信息框
+        stats_text = (
+            f"Total Cases: {int(total_count)}\n"
+            f"Successful Cases: {int(success_count)}\n"
+            f"Failed Cases: {int(len(failed_labels))}\n"
+            f"Total Image Pairs: {int(total_pairs)}\n"
+            f"Average Inliers: {avg_inliers:.2f}\n"
+            # f"Std Dev: {std_inliers:.2f if len(valid_inliers) > 0 else 0.0}"
+        )
+        
+        plt.text(
+            0.02,
+            0.98,
+            stats_text,
+            transform=ax.transAxes,
+            fontsize=12,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5)
+        )
+        
+        # 保存图像
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()

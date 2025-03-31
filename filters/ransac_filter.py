@@ -73,6 +73,26 @@ class RANSACFilter(MatchFilter):
         return self.filter_matches_with_ransac(
             mkpts0, mkpts1, mconf, self.threshold, self.method
         )
+        
+    def filter_kpts_desc(self, mkpts0, mkpts1, mconf, mdesc0, mdesc1) -> Tuple:
+        """
+        Filter matches using RANSAC.
+        
+        Args:
+            mkpts0: Keypoints from the first image
+            mkpts1: Keypoints from the second image
+            mconf: Confidence scores for the matches
+            
+        Returns:
+            Tuple containing:
+            - mkpts0_ransac: Filtered keypoints from the first image
+            - mkpts1_ransac: Filtered keypoints from the second image
+            - mconf_ransac: Filtered confidence scores
+            - mask: Boolean mask indicating inliers
+        """
+        return self.filter_matches_with_ransac_and_desc(
+            mkpts0, mkpts1, mconf, mdesc0, mdesc1, self.threshold, self.method
+        )
 
     def filter_matches_with_ransac(
         self, mkpts0, mkpts1, mconf, ransac_threshold=3.0, method="fundamental"
@@ -128,3 +148,81 @@ class RANSACFilter(MatchFilter):
         mconf_ransac = mconf[mask] if mconf is not None else None
 
         return mkpts0_ransac, mkpts1_ransac, mconf_ransac, mask
+
+    def filter_matches_with_ransac_and_desc(
+        self, mkpts0, mkpts1, mconf, mdesc0, mdesc1, ransac_threshold=3.0, method="fundamental"
+    ):
+        """
+        Filter matches using RANSAC with either homography or fundamental matrix estimation.
+
+        Args:
+            mkpts0, mkpts1: Nx2 arrays containing matched keypoints from images 0 and 1
+            mconf: Confidence scores for the matches
+            mdesc0, mdesc1: Descriptors for the keypoints from images 0 and 1
+            ransac_threshold: RANSAC threshold for filtering
+            method: 'fundamental' or 'homography'
+
+        Returns:
+            mkpts0_ransac, mkpts1_ransac: Filtered keypoints (inliers only)
+            mconf_ransac: Filtered confidence scores
+            mask: Boolean mask indicating inliers
+        """
+        if len(mkpts0) < 8:
+            # Need at least 8 points for fundamental matrix estimation
+            # or 4 points for homography
+            return mkpts0, mkpts1, mconf, mdesc0, mdesc1, np.ones(len(mkpts0), dtype=bool)
+
+        if method == "fundamental":
+            # Find fundamental matrix using RANSAC
+            F, mask = cv2.findFundamentalMat(
+                mkpts0, mkpts1, cv2.FM_RANSAC, ransac_threshold, 0.999
+            )
+
+            # Handle case when no fundamental matrix is found
+            if F is None or F.shape == (0, 0):
+                return mkpts0, mkpts1, mconf, mdesc0, mdesc1, np.ones(len(mkpts0), dtype=bool)
+
+        elif method == "homography":
+            # Find homography using RANSAC
+            H, mask = cv2.findHomography(mkpts0, mkpts1, cv2.RANSAC, ransac_threshold)
+
+            # Handle case when no homography is found
+            if H is None:
+                return mkpts0, mkpts1, mconf, mdesc0, mdesc1, np.ones(len(mkpts0), dtype=bool)
+        else:
+            raise ValueError(f"Unknown RANSAC method: {method}")
+
+        # Convert mask to boolean array if it's not already
+        if isinstance(mask, np.ndarray) and mask.ndim > 1:
+            mask = mask.ravel().astype(bool)
+        else:
+            mask = mask.astype(bool)
+
+        # Return filtered matches
+        mkpts0_ransac = mkpts0[mask]
+        mkpts1_ransac = mkpts1[mask]
+        mconf_ransac = mconf[mask] if mconf is not None else None
+        
+        # 检查描述符的维度并适当处理
+        # SuperPoint的描述符通常形状为(D, N)，其中D是描述符维度，N是关键点数量
+        # 我们需要确保在应用掩码前，描述符的形状是(N, D)或者正确应用掩码
+        mdesc0_ransac = None
+        mdesc1_ransac = None
+        
+        if mdesc0 is not None:
+            # 检查描述符维度是否需要转置
+            if mdesc0.shape[0] != len(mask):
+                # 描述符形状为(D, N)，需要沿着第二个维度索引
+                mdesc0_ransac = mdesc0[:, mask]
+            else:
+                # 假设描述符形状为(N, D)
+                mdesc0_ransac = mdesc0[mask]
+                
+        if mdesc1 is not None:
+            # 同样检查第二个描述符
+            if mdesc1.shape[0] != len(mask):
+                mdesc1_ransac = mdesc1[:, mask]
+            else:
+                mdesc1_ransac = mdesc1[mask]
+
+        return mkpts0_ransac, mkpts1_ransac, mconf_ransac, mdesc0_ransac, mdesc1_ransac, mask
