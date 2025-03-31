@@ -104,4 +104,5 @@ compare_fb_sg_ransac: false # Compare FeatureBooster vs SuperGlue
 shuffle: false # Shuffle order of pairs
 force_cpu: false # Force PyTorch to use CPU
 use_multithreading: false # 是否启用多线程处理
-num_threads: 2 # 多线程处理时的线程数量
+num_threads: 4 # 多线程处理时的线程数量
+model_reload_interval: 50 # 处理多少对图像后重新加载模型（用于减少内存泄漏）

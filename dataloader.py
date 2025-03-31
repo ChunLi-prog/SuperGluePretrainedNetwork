@@ -7,7 +7,7 @@
 - 加载图像对：从 scannet_pairs.txt 读取白天-黑夜图像对列表。
 - 处理每对图像：
     - 读取白天和黑夜图像
-    - 从 day_label 和 night_label 目录加载 SuperPoint 特征点
+    - 从 day_label 和 night_label 目录, 或者是从 .npz文件中加载 SuperPoint 特征点 
     - 将 SuperPoint 特征点可视化并保存到 vis_superpoint 目录
     - 从 dump_match_pairs 目录读取匹配文件 (.npz)
     - 提取 RANSAC 过滤后的匹配点
@@ -376,5 +376,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # python dataLoader.py --case_dir /path/to/P11_ent1_route1_case2-P11_ent1_route1_case4
+    # python dataLoader.py \
+    # --case_dir /path/to/P11_ent1_route1_case2-P11_ent1_route1_case4 \
+    # --use_npz_keypoints
     main()

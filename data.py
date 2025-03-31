@@ -274,3 +274,35 @@ class ImagePair:
         if self.kpts0 is None or self.kpts1 is None or self.desc0 is None or self.desc1 is None:
             return self.load_kpts_desc()
         return self.kpts0, self.kpts1, self.desc0, self.desc1
+
+    def clear_data(self):
+        """
+        释放大型数据对象以减少内存使用。
+        在处理完图像对后调用此方法可以有效减少内存泄漏。
+        """
+        # 清理图像数据（通常是最占内存的部分）
+        self.image0 = None
+        self.image1 = None
+        
+        # 清理PyTorch张量（在CUDA内存中可能会占用大量空间）
+        self.inp0 = None
+        self.inp1 = None
+        self.processed_inp0 = None
+        self.processed_inp1 = None
+        
+        # 清理处理后的图像
+        self.processed_image0 = None 
+        self.processed_image1 = None
+        
+        # 清理特征点和描述子数据
+        self.kpts0 = None
+        self.kpts1 = None
+        self.desc0 = None
+        self.desc1 = None
+        
+        # 保留元数据和路径信息，因为这些通常不会占用太多内存
+        # 并且在后续处理中可能仍然需要
+        
+        # 强制执行Python垃圾回收
+        import gc
+        gc.collect()

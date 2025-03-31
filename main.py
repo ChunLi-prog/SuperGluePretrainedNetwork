@@ -134,6 +134,9 @@ def create_config(opt):
     yaml_config.setdefault('fb_config', "fb_config.yaml")
     yaml_config.setdefault('line_width', 0.3)
     yaml_config.setdefault('pose_threshold', 1.0)
+    yaml_config.setdefault('use_multithreading', False)
+    yaml_config.setdefault('num_threads', 2)
+    yaml_config.setdefault('model_reload_interval', 10)  # 默认每处理10对图像重新加载模型
     
     # Set up nested dictionaries with defaults if not present
     if 'superpoint' not in yaml_config:
@@ -252,4 +255,4 @@ if __name__ == "__main__":
     )
     
     # Run the main function
-    main() 
+    main()

@@ -59,6 +59,10 @@ class MatchingPipeline:
         self.case_lists = []
         self.case_dir_lists = []
         
+        # 设置模型重新加载的间隔
+        self.pairs_processed = 0
+        self.model_reload_interval = config.get("model_reload_interval", 50)
+        
         # Set up device for computation
         self.device = (
             "cuda" if torch.cuda.is_available() and not config["force_cpu"] else "cpu"
@@ -432,7 +436,15 @@ class MatchingPipeline:
         # Process with SuperGlue
         inliers = self._process_with_superglue(image_pair)
         
+        # 处理完成后，使用新添加的clear_data方法释放内存
+        image_pair.clear_data()
+        
         self.timer.update("process_image_pair")
+        
+        # 处理完成后清理缓存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         return inliers
 
     def _process_with_superglue(self, image_pair):
@@ -445,6 +457,12 @@ class MatchingPipeline:
         Returns:
             Number of RANSAC inliers
         """
+        # # 检查是否需要重新加载模型来清理内存
+        # if hasattr(self, 'pairs_processed') and self.pairs_processed > 0 and self.pairs_processed % self.model_reload_interval == 0:
+        #     self._reload_models()
+        #     if torch.cuda.is_available():
+        #         torch.cuda.empty_cache()
+        
         # Match features using SuperGlue
         match_data_sp_sg = {
             "image0": image_pair.inp0,
@@ -515,6 +533,11 @@ class MatchingPipeline:
         if self.config["compare_sg_knn_ransac"]:
             self._compare_superglue_knn(image_pair, all_data_sp_sg_ransac)
 
+        all_data_sp_sg_ransac = None
+        
+        # 更新已处理图像对的计数，用于控制模型重载
+        self.pairs_processed += 1
+        
         # Return the number of RANSAC inliers
         return len(mkpts0_ransac)
 
@@ -821,3 +844,48 @@ class MatchingPipeline:
                 aucs[0], aucs[1], aucs[2], prec, ms
             )
         )
+
+    def _reload_models(self):
+        """
+        重新加载模型以清理可能的内存泄漏。
+        这个方法会重新初始化所有的PyTorch模型，以释放可能被累积的内存。
+        """
+        logger.info(f"重新加载模型以清理内存（已处理 {self.pairs_processed} 对图像）")
+        
+        # 记录当前设备以及模型状态
+        device = self.device
+        
+        # 重新初始化匹配模型
+        self.sp_sg_matching = (
+            Matching(
+                {"superpoint": self.config["superpoint"], "superglue": self.config["superglue"]}
+            )
+            .eval()
+            .to(device)
+        )
+
+        # 重新初始化FeatureBooster模型（如果启用）
+        if self.config["use_fb"]:
+            self.feat_bst_matching = (
+                FeatBoostEnhancedMatching(
+                    {
+                        "superpoint": self.config["superpoint"],
+                        "superglue": self.config["superglue"],
+                        "featurebooster": self.config["featurebooster"],
+                    }
+                )
+                .eval()
+                .to(device)
+            )
+
+        # 重新提取功能组件
+        self.sp_feat_extractor = self.sp_sg_matching.superpoint
+        self.sg_matcher = self.sp_sg_matching.superglue
+        
+        # 强制执行垃圾回收
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        logger.info("模型重新加载完成")
