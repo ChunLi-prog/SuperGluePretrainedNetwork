@@ -1,0 +1,39 @@
+# File paths
+input_dir: "/media/user/Samsung_T5/maploc_dataset/gen_local_feature_test_eval/"
+output_dir: "/media/user/Samsung_T5/maploc_dataset/gen_local_feature_test_eval/"
+
+# Processing options
+max_length: -1 # Maximum number of pairs to evaluate, -1 for all
+resize: [-1]
+# resize: [640, 480] # Width, Height - use single value for max dimension, -1 for no resize
+resize_float: false # Resize the image after casting uint8 to float
+
+# RANSAC parameters
+ransac: true
+ransac_threshold: 3.0 # RANSAC threshold for match filtering
+ransac_method: "fundamental" # RANSAC method: "fundamental" or "homography"
+
+# KNN matching parameters
+knn_ratio: 0.8 # Ratio threshold for Lowe's ratio test
+knn_distance: "L2" # Distance metric: "L2", "L1", or "Hamming"
+
+# Visualization settings
+viz: true # Visualize matches and save plots
+eval: false # Perform evaluation using ground truth
+fast_viz: false # Use faster visualization with OpenCV
+cache: false # Skip pair if output files exist
+show_keypoints: false # Show keypoints in visualizations
+viz_extension: "png" # File extension for visualizations: "png" or "pdf"
+opencv_display: false # Show images with OpenCV before saving
+line_width: 0.3 # Line width for matches in visualizations
+pose_threshold: 1.0 # Threshold for pose evaluation
+
+# Comparison options
+viz_comparison: true # Compare before/after RANSAC
+compare_sg_knn_ransac: false # Compare SuperGlue vs KNN with RANSAC
+compare_knn_fb_ransac: false # Compare KNN vs FeatureBooster with RANSAC
+compare_fb_sg_ransac: false # Compare FeatureBooster vs SuperGlue
+
+# System options
+shuffle: false # Shuffle order of pairs
+force_cpu: false # Force PyTorch to use CPU 

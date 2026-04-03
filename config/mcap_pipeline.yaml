@@ -1,0 +1,34 @@
+# Stage 2: SuperPoint + SuperGlue Matching Configuration
+# Reads original-resolution images from Stage 1, resizes in memory for SP+SG
+
+# Input: Stage 1 output directory (contains {case}/{camera}/day|night/ + scannet_pairs.txt)
+input_dir: "/home/user/data/maploc_data/gen_kpts_gt_datasets/gt_results"
+
+# SP+SG input resolution (set to original camera resolution to avoid aspect ratio distortion)
+# Original fisheye camera resolution: 1920x1536 (W x H, aspect ratio 5:4)
+sp_input_resolution: [1920, 1536]
+
+# SuperPoint parameters
+superpoint:
+  nms_radius: 4
+  keypoint_threshold: 0.005
+  max_keypoints: 2048              # increased for full-res 1920x1536 input
+
+# SuperGlue parameters
+superglue:
+  weights: "outdoor"                # "outdoor" or "indoor"
+  sinkhorn_iterations: 20
+  match_threshold: 0.2
+
+# RANSAC post-filter (optional geometric verification after SuperGlue)
+ransac: true
+ransac_threshold: 3.0
+ransac_method: "fundamental"        # "fundamental" or "homography"
+
+# Visualization (distance-sampled)
+save_visualization: true
+vis_sample_interval: 10             # save vis every N-th pair
+
+# Parallelism
+num_gpu_workers: 1                  # increase for multi-GPU
+force_cpu: false

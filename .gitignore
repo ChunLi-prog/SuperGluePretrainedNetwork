@@ -1,4 +1,10 @@
 *.pyc
 *.DS_Store
 *.swp
-.vscode
+.vscodemodels.zip
+*.whl
+cuda_env.yml
+maploc_environment.yml
+FeatBooster/
+__pycache__/
+userandpasswd

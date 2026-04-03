@@ -1,0 +1,39 @@
+# 停车场数据表格
+csv_file: "/home/user/data/maploc_data/gen_kpts_gt_datasets/50_50_UPDATE_c_a_parking.csv"
+
+# Raw mcap dataset list
+raw_mcap_dataset: "/home/user/data/maploc_data/gen_kpts_gt_datasets/odo_dump_process.json"
+
+# 原始mcap数据路径(从csv_file中查找停车场, 根据停车场id来查找raw_mcap_dataset中的mcap文件路径)
+raw_mcap_path: "/home/user/data/maploc_data/gen_featpts_gt_dataset/j6_128_scale4"
+
+# 定位对应map数据路径(用不到)(map版本文档：https://carizon.feishu.cn/wiki/SI75wFvc6iFlIQkeuafc56jYnbg#share-QOHNdK3X9oDmmpxtPYYc29PknAe)
+map_path: "/home/user/data/maploc_data/gen_featpts_gt_dataset/spmap_j6_128_new"
+
+# 真值数据集路径(bucket路径: dmpv2://carizon_fillback_jfs/yanfeng.li/rawData/location/mr_data_special/lidar_map_dataset_0319)
+gt_path: "/home/user/data/maploc_data/gen_kpts_gt_datasets/gt_dataset_samples/"
+
+# 局部特征真值数据输出路径
+out_path: "/home/user/data/maploc_data/gen_kpts_gt_datasets/gt_results"
+
+maploc_path: "/home/user/project/maploc/navinet_localization/clam"
+
+# # 参数1：18组数据，5k帧匹配对
+# keyframe_dist: 8.0 # （m）关键帧之间的距离阈值，超过该阈值的关键帧会被保留
+# max_match_dist_threshold: 1.0 # （m）两轨迹之间的距离阈值，超过该阈值的轨迹会被保留
+# max_match_angle_threshold: 5.0 # （angle）两轨迹之间的角度阈值，超过该阈值的轨迹会被保留
+
+# neighbor_time_threshold: 1.0 # （s）邻近关键帧的时间阈值，该阈值范围内的night关键帧会被保留
+# neighbor_distance_threshold: 1.0 # （m）邻近关键帧的距离阈值，该阈值范围内的night关键帧会被保留
+
+# 参数2：18组数据，50k帧匹配对
+keyframe_dist: 2.0 # （m）关键帧之间的距离阈值，超过该阈值的关键帧会被保留
+max_match_dist_threshold: 4.0 # （m）两轨迹之间的距离阈值，超过该阈值的轨迹会被保留
+max_match_angle_threshold: 10.0 # （angle）两轨迹之间的角度阈值，超过该阈值的轨迹会被保留
+
+neighbor_time_threshold: 10.0 # （s）邻近关键帧的时间阈值，该阈值范围内的night关键帧会被保留
+neighbor_distance_threshold: 4.0 # （m）邻近关键帧的距离阈值，该阈值范围内的night关键帧会被保留
+neighbor_keyframe_dist: 0.5 # （m）邻近关键帧的距离阈值，该阈值范围内的night关键帧会被保留
+
+### 日志记录参数
+log_level: 10 # 10: debug, 20: info, 30: warning, 40: error

@@ -1,0 +1,52 @@
+# L20 Cluster Configuration: MCAP GT Generation Pipeline
+# All paths use /bucket/input/ JuiceFS mounts (dmpv2:// → /bucket/input/)
+
+# --- Orchestrator settings ---
+out_path: "/job_data/gt_results"
+log_dir: "/job_log/mcap_gt_gen"
+
+# Stage configs
+stage1_config: "test_gen_locfeat_gt_daynight_mcap/config/gen_locfeat_in_server.yaml"
+stage2_config: "config/mcap_pipeline_l20_stage2.yaml"
+
+# Parallelism
+stage1_workers: 4
+stage2_workers: 2
+
+# Phase 0 inputs (CSV + JSON index)
+csv_file: "/bucket/input/carizon_maploc_jfs/gt_datasets/50_50_UPDATE_c_a_parking.csv"
+raw_mcap_dataset: "/bucket/input/carizon_maploc_jfs/gt_datasets/odo_dump_process.json"
+
+# Error alerting
+alert_fail_ratio: 0.3
+
+# --- Stage 2: SuperPoint + SuperGlue ---
+input_dir: "/job_data/gt_results"
+sp_input_resolution: [1920, 1536]
+
+superpoint:
+  nms_radius: 4
+  keypoint_threshold: 0.005
+  max_keypoints: 2048
+
+superglue:
+  weights: "outdoor"
+  sinkhorn_iterations: 20
+  match_threshold: 0.2
+
+ransac: true
+ransac_threshold: 3.0
+ransac_method: "fundamental"
+
+save_visualization: true
+vis_sample_interval: 10
+
+num_gpu_workers: 2
+force_cpu: false
+
+# --- dmpv2:// to local path mapping ---
+# dmpv2://carizon_collect_jfs4/... → /bucket/input/carizon_collect_jfs4/...
+# dmpv2://carizon_maploc_jfs/...  → /bucket/input/carizon_maploc_jfs/...
+# dmpv2://carizon_fillback_jfs/...→ /bucket/input/carizon_fillback_jfs/...
+mcap_path_prefix_map:
+  "dmpv2://": "/bucket/input/"

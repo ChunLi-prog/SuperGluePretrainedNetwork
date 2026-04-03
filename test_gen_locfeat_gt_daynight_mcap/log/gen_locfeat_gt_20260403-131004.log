@@ -1,0 +1,19 @@
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:445|===== Phase 1: Trajectory Matching =====
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:449|Using case_pairs.json: /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_results/case_pairs.json
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:457|Processing 4 case pairs
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:228|Processing day case: P1_ent1_route1_case1 with file: /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_dataset_samples/outdoor-P1_ent1_route1_case1/lio_offline_10HZ.txt
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:229|Processing night case: P1_ent1_route1_case3 with file: /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_dataset_samples/outdoor-P1_ent1_route1_case3/lio_offline_10HZ.txt
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:132|Loaded 1977 trajectory points from /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_dataset_samples/outdoor-P1_ent1_route1_case1/lio_offline_10HZ.txt
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:132|Loaded 2198 trajectory points from /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_dataset_samples/outdoor-P1_ent1_route1_case3/lio_offline_10HZ.txt
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:250|Using keyframe distance threshold: 2.0m
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:251|Using max match distance threshold: 4.0m
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:252|Using max match angle threshold: 10.0°
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:254|Using neighbor time threshold: 10.0s
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:255|Using neighbor distance threshold: 4.0m
+20260403-13:10:04|INFO|gen_locfeat_gt_daynight.py:256|Using neighbor keyframe distance threshold: 0.5m
+20260403-13:10:08|INFO|gen_locfeat_gt_daynight.py:327|Found 383 day-night keyframe pairs for P1_ent1_route1_case1 and P1_ent1_route1_case3
+20260403-13:10:08|INFO|gen_locfeat_gt_daynight.py:345|Saved keyframe pairs to /home/user/data/maploc_data/gen_kpts_gt_datasets/gt_results/keyframe_pairs/P1_ent1_route1_case1-P1_ent1_route1_case3_pairs.json
+20260403-13:10:08|WARNING|gen_locfeat_gt_daynight.py:470|Missing GT trajectory for P1_ent1_route1_case1-P1_ent1_route1_case4
+20260403-13:10:08|WARNING|gen_locfeat_gt_daynight.py:470|Missing GT trajectory for P1_ent1_route1_case2-P1_ent1_route1_case3
+20260403-13:10:08|WARNING|gen_locfeat_gt_daynight.py:470|Missing GT trajectory for P1_ent1_route1_case2-P1_ent1_route1_case4
+20260403-13:10:08|INFO|gen_locfeat_gt_daynight.py:514|Phase 1 complete: 1 cases OK, 3 skipped, 383 total keyframe pairs
